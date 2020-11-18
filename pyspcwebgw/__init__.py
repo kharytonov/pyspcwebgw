@@ -52,9 +52,9 @@ class SpcWebGateway:
 
     async def async_load_parameters(self):
         """Fetch area and zone info from SPC to initialize."""
-        self._info = await self._async_get_data('panel')
-        zones = await self._async_get_data('zone')
-        areas = await self._async_get_data('area')
+        self._info = await self._async_get_panel_info()
+        zones = await self._async_get_zones()
+        areas = await self._async_get_areas()
 
         if not zones or not areas:
             return False
@@ -80,18 +80,19 @@ class SpcWebGateway:
             AreaMode.PART_SET_B: 'set_b',
             AreaMode.FULL_SET: 'set'
         }
-        if isinstance(area, Area):
-            area_id = area.id
-        else:
-            area_id = area
+        if not isinstance(area, Area):
+            area = self._areas.get(area)
 
         url = urljoin(self._api_url, "spc/area/{area_id}/{command}".format(
-            area_id=area_id, command=AREA_MODE_COMMAND_MAP[new_mode]))
+            area_id=area.id, command=AREA_MODE_COMMAND_MAP[new_mode]))
 
-        return await async_request(self._session.put, url)
+        data = await async_request(self._session.put, url)
+        await area.update_state(self)
+        return data
 
     async def _async_ws_handler(self, data):
         """Process incoming websocket message."""
+
         sia_message = data['data']['sia']
         spc_id = sia_message['sia_address']
         sia_code = sia_message['sia_code']
@@ -99,41 +100,41 @@ class SpcWebGateway:
         _LOGGER.debug("SIA code is %s for ID %s", sia_code, spc_id)
 
         if sia_code in Area.SUPPORTED_SIA_CODES:
-            entity = self._areas.get(spc_id, None)
-            resource = 'area'
+            if len(self._areas) == 1:
+                entity = list(self._areas.values())[0]
+            else:
+                entity = self._areas.get(spc_id, None)
         elif sia_code in Zone.SUPPORTED_SIA_CODES:
             entity = self._zones.get(spc_id, None)
-            resource = 'zone'
         else:
             _LOGGER.debug("Not interested in SIA code %s", sia_code)
             return
         if not entity:
             _LOGGER.error("Received message for unregistered ID %s", spc_id)
             return
-
-        data = await self._async_get_data(resource, entity.id)
-        entity.update(data, sia_code)
+        else:
+            await entity.update_state(self, sia_code)
 
         if self._async_callback:
             ensure_future(self._async_callback(entity))
 
-    async def _async_get_data(self, resource, id=None):
-        """Get the data from the resource."""
-        if id:
-            url = urljoin(self._api_url, "spc/{}/{}".format(resource, id))
-        else:
-            url = urljoin(self._api_url, "spc/{}".format(resource))
+    async def _async_get_zones(self):
+        """Get the data for all resourced of a specific type """
+        url = urljoin(self._api_url, "spc/zone")
         data = await async_request(self._session.get, url)
-        if not data:
-            return False
-        if id and isinstance(data['data'][resource], list):
-            # for some reason the gateway returns an array with a single
-            # element for areas but not for zones...
-            return data['data'][resource][0]
-        elif id:
-            return data['data'][resource]
+        if data:
+            return [item for item in data['data']["zone"]]
 
-        if isinstance(data['data'][resource], list):  
-            return [item for item in data['data'][resource]]
+    async def _async_get_areas(self):
+        """Get the data for all resourced of a specific type """
+        url = urljoin(self._api_url, "spc/area")
+        data = await async_request(self._session.get, url)
+        if data:
+            return [item for item in data['data']["area"]]
 
-        return data['data'][resource]
+    async def _async_get_panel_info(self):
+        """Get the data for all resourced of a specific type """
+        url = urljoin(self._api_url, "spc/panel")
+        data = await async_request(self._session.get, url)
+        if data:
+            return data['data']["panel"]

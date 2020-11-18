@@ -1,7 +1,8 @@
 import logging
+from urllib.parse import urljoin
 
 from pyspcwebgw.const import ZoneInput, ZoneType, ZoneStatus
-from pyspcwebgw.utils import _load_enum
+from pyspcwebgw.utils import _load_enum, async_request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,3 +54,13 @@ class Zone:
         self._input = _load_enum(ZoneInput, spc_zone['input'])
         self._type = _load_enum(ZoneType, spc_zone['type'])
         self._status = _load_enum(ZoneStatus, spc_zone['status'])
+
+    async def update_state(self, gw, sia_code=None):
+        url = urljoin(gw._api_url, "spc/zone/{}".format(self.id))
+        data = await async_request(gw._session.get, url)
+        if data:
+            if isinstance(data['data']['zone'], list):
+                data = data['data']['zone'][0]
+            else:
+                data = data['data']['zone']
+            self.update(data, sia_code)
